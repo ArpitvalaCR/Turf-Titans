@@ -124,11 +124,20 @@ export type RegistrationPayload = {
   players?: Array<{ name: string; role?: string; isSubstitute?: boolean }>;
 };
 
-export async function submitRegistration(data: RegistrationPayload) {
-  return apiFetch('/api/v1/registrations', {
+export async function submitRegistration(data: RegistrationPayload | FormData) {
+  const isFormData = typeof FormData !== 'undefined' && data instanceof FormData;
+  return apiFetch<AdminRegistrationItem>('/api/v1/registrations', {
     method: 'POST',
-    body: JSON.stringify(data),
+    body: isFormData ? data : JSON.stringify(data),
   });
+}
+
+export async function getMyRegistrations() {
+  return apiFetch<AdminRegistrationItem[]>('/api/v1/registrations/my-registrations');
+}
+
+export async function getRegistrationStatus(identifier: string) {
+  return apiFetch<AdminRegistrationItem>(`/api/v1/registrations/status/${encodeURIComponent(identifier)}`);
 }
 
 export type AdminRegistrationItem = {
@@ -154,7 +163,7 @@ export type AdminRegistrationItem = {
   verifiedAt?: string | null;
   rejectionReason?: string;
   createdAt: string;
-  eventId?: { _id: string; title: string; sport: string; venue: string } | null;
+  eventId?: { _id: string; title: string; sport: string; venue: string; registrationFee?: number } | null;
 };
 
 export async function getAdminRegistrations(filters?: { eventId?: string; paymentStatus?: string; registrationStatus?: string }) {

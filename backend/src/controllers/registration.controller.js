@@ -9,6 +9,8 @@ import {
   approveRegistration,
   rejectRegistration,
   deleteRegistration,
+  getUserRegistrations,
+  getRegistrationStatusByIdentifier,
 } from '../services/registration.service.js';
 
 const parseRegistrationBody = (body) => ({
@@ -24,7 +26,6 @@ const parseRegistrationBody = (body) => ({
   sport: body.sport || '',
   message: body.message || '',
   paymentProof: body.paymentProof || body.paymentScreenshot || null,
-  paymentAmount: body.paymentAmount ? Number(body.paymentAmount) : undefined,
   transactionId: body.transactionId || '',
   players:
     typeof body.players === 'string'
@@ -104,5 +105,29 @@ export const deleteRegistrationHandler = asyncHandler(async (req, res) => {
 
   res.status(200).json(
     new ApiResponse(200, null, 'Registration deleted successfully')
+  );
+});
+
+export const getMyRegistrationsHandler = asyncHandler(async (req, res) => {
+  const email = req.user?.email;
+  if (!email) {
+    throw new ApiError(401, 'Unauthorized: User not authenticated');
+  }
+  const registrations = await getUserRegistrations(email);
+  res.status(200).json(
+    new ApiResponse(200, registrations, 'User registrations fetched successfully')
+  );
+});
+
+export const getRegistrationStatusHandler = asyncHandler(async (req, res) => {
+  const identifier = req.params.identifier;
+  const userEmail = req.user?.email;
+  if (!userEmail) {
+    throw new ApiError(401, 'Unauthorized: User not authenticated');
+  }
+  const isAdmin = req.user?.role === 'admin' || Boolean(req.admin);
+  const registration = await getRegistrationStatusByIdentifier(identifier, userEmail, isAdmin);
+  res.status(200).json(
+    new ApiResponse(200, registration, 'Registration status fetched successfully')
   );
 });

@@ -6,7 +6,7 @@ const storage = multer.memoryStorage();
 const imageMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const videoMimeTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
 const pdfMimeTypes = ['application/pdf'];
-const paymentMimeTypes = [...imageMimeTypes, 'application/pdf'];
+const paymentMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
 
 const createFileFilter = (allowedMimeTypes) => (_req, file, cb) => {
   if (allowedMimeTypes.includes(file.mimetype)) {

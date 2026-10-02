@@ -21,9 +21,15 @@ import {
   X,
   Image as ImageIcon,
   Trash2,
+  CreditCard,
+  Check,
+  Ban,
+  DollarSign
 } from 'lucide-react'
 import {
   getAdminRegistrations,
+  verifyAdminPayment,
+  rejectAdminPayment,
   approveAdminRegistration,
   rejectAdminRegistration,
   deleteAdminRegistration,
@@ -33,7 +39,8 @@ import {
 export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string }) {
   const [registrations, setRegistrations] = useState<AdminRegistrationItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [filterStatus, setFilterStatus] = useState<'ALL' | 'pending' | 'approved' | 'rejected'>('ALL')
+  const [filterRegStatus, setFilterRegStatus] = useState<'ALL' | 'pending' | 'approved' | 'rejected'>('ALL')
+  const [filterPayStatus, setFilterPayStatus] = useState<'ALL' | 'pending' | 'verified' | 'rejected'>('ALL')
   const [searchQuery, setSearchQuery] = useState('')
 
   // Action Loading & Messages
@@ -41,10 +48,12 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
-  // Modals
-  const [selectedProofImg, setSelectedProofImg] = useState<{ src: string; team: string } | null>(null)
+  // Modals & Prompts
+  const [selectedProofImg, setSelectedProofImg] = useState<{ src: string; team: string; amount?: number } | null>(null)
   const [expandedRegId, setExpandedRegId] = useState<string | null>(null)
-  const [rejectPromptId, setRejectPromptId] = useState<string | null>(null)
+
+  // Rejection prompts
+  const [rejectPrompt, setRejectPrompt] = useState<{ id: string; type: 'PAYMENT' | 'REGISTRATION' } | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [deletePromptId, setDeletePromptId] = useState<string | null>(null)
 
@@ -53,7 +62,8 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
     try {
       const data = await getAdminRegistrations({
         eventId: tournamentId || undefined,
-        registrationStatus: filterStatus === 'ALL' ? undefined : filterStatus,
+        registrationStatus: filterRegStatus === 'ALL' ? undefined : filterRegStatus,
+        paymentStatus: filterPayStatus === 'ALL' ? undefined : filterPayStatus,
       })
       setRegistrations(data || [])
     } catch {
@@ -61,7 +71,7 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
     } finally {
       setLoading(false)
     }
-  }, [filterStatus, tournamentId])
+  }, [filterRegStatus, filterPayStatus, tournamentId])
 
   useEffect(() => {
     loadRegistrations()
@@ -78,30 +88,69 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
     )
   })
 
-  const handleVerifyRegistration = async (id: string) => {
+  // 1. Verify Payment Action
+  const handleVerifyPayment = async (id: string) => {
     setActionLoadingId(id)
     setErrorMsg('')
     try {
-      await approveAdminRegistration(id)
-      setSuccessMsg('Registration verified successfully! Team has been approved.')
+      await verifyAdminPayment(id)
+      setSuccessMsg('Payment marked as VERIFIED! Confirmation email sent to captain.')
       setTimeout(() => setSuccessMsg(''), 4000)
       await loadRegistrations()
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Failed to verify registration')
+      setErrorMsg(err?.message || 'Failed to verify payment')
     } finally {
       setActionLoadingId(null)
     }
   }
 
-  const handleConfirmReject = async () => {
-    if (!rejectPromptId) return
-    setActionLoadingId(rejectPromptId)
+  // 2. Reject Payment Action
+  const handleConfirmRejectPayment = async () => {
+    if (!rejectPrompt || rejectPrompt.type !== 'PAYMENT') return
+    const id = rejectPrompt.id
+    setActionLoadingId(id)
     setErrorMsg('')
     try {
-      await rejectAdminRegistration(rejectPromptId, rejectReason)
-      setSuccessMsg('Registration rejected')
-      setTimeout(() => setSuccessMsg(''), 3000)
-      setRejectPromptId(null)
+      await rejectAdminPayment(id, rejectReason)
+      setSuccessMsg('Payment marked as REJECTED. Notice sent to captain.')
+      setTimeout(() => setSuccessMsg(''), 4000)
+      setRejectPrompt(null)
+      setRejectReason('')
+      await loadRegistrations()
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to reject payment')
+    } finally {
+      setActionLoadingId(null)
+    }
+  }
+
+  // 3. Approve Registration Action
+  const handleApproveRegistration = async (id: string) => {
+    setActionLoadingId(id)
+    setErrorMsg('')
+    try {
+      await approveAdminRegistration(id)
+      setSuccessMsg('Registration APPROVED! Squad has been accepted into the tournament draw.')
+      setTimeout(() => setSuccessMsg(''), 4000)
+      await loadRegistrations()
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to approve registration')
+    } finally {
+      setActionLoadingId(null)
+    }
+  }
+
+  // 4. Reject Registration Action
+  const handleConfirmRejectRegistration = async () => {
+    if (!rejectPrompt || rejectPrompt.type !== 'REGISTRATION') return
+    const id = rejectPrompt.id
+    setActionLoadingId(id)
+    setErrorMsg('')
+    try {
+      await rejectAdminRegistration(id, rejectReason)
+      setSuccessMsg('Registration marked as REJECTED.')
+      setTimeout(() => setSuccessMsg(''), 4000)
+      setRejectPrompt(null)
       setRejectReason('')
       await loadRegistrations()
     } catch (err: any) {
@@ -111,13 +160,14 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
     }
   }
 
+  // 5. Delete Registration Action
   const handleConfirmDelete = async () => {
     if (!deletePromptId) return
     setActionLoadingId(deletePromptId)
     setErrorMsg('')
     try {
       await deleteAdminRegistration(deletePromptId)
-      setSuccessMsg('Registration deleted successfully.')
+      setSuccessMsg('Registration deleted permanently.')
       setTimeout(() => setSuccessMsg(''), 3000)
       setDeletePromptId(null)
       await loadRegistrations()
@@ -135,15 +185,15 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="rounded bg-[#74c004]/10 border border-[#74c004]/30 px-2.5 py-0.5 text-[10px] font-black uppercase text-[#74c004]">
-              Admin Review
+              Admin Verification Desk
             </span>
-            <span className="text-xs text-slate-400 font-bold">Registration Verification Desk</span>
+            <span className="text-xs text-slate-400 font-bold">Payments & Squads Management</span>
           </div>
           <h2 className="text-2xl font-display font-black uppercase text-white">
-            Review Submitted Registrations
+            Review Submitted Registrations & Payments
           </h2>
           <p className="text-xs text-slate-400">
-            Review team rosters (10 Main Players + 1 Substitute) and attached payment screenshots, and perform official verification.
+            Verify payment screenshots, manage payment states (Pending, Verified, Rejected), and approve official team entries.
           </p>
         </div>
 
@@ -173,40 +223,72 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
       )}
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Status Tabs */}
-        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[#0b1329] border border-white/10 overflow-x-auto">
-          {[
-            { id: 'ALL', label: 'All Registrations' },
-            { id: 'pending', label: 'Pending Review' },
-            { id: 'approved', label: 'Approved Teams' },
-            { id: 'rejected', label: 'Rejected' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setFilterStatus(tab.id as any)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
-                filterStatus === tab.id
-                  ? 'bg-[#74c004] text-[#080e1e] shadow-md shadow-[#74c004]/20'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      <div className="space-y-3">
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
 
-        {/* Search Input */}
-        <div className="relative min-w-[260px]">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search by team, captain, ID..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl bg-[#0b1329] border border-white/10 pl-9 pr-3 py-2 text-xs font-semibold text-white placeholder:text-slate-500 focus:border-[#74c004] focus:outline-none"
-          />
+          {/* Dual Filter Controls */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Registration Status Filter */}
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0b1329] border border-white/10 overflow-x-auto">
+              <span className="text-[10px] uppercase font-bold text-slate-400 px-2">Squad:</span>
+              {[
+                { id: 'ALL', label: 'All' },
+                { id: 'pending', label: 'Pending Review' },
+                { id: 'approved', label: 'Approved' },
+                { id: 'rejected', label: 'Rejected' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setFilterRegStatus(tab.id as any)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
+                    filterRegStatus === tab.id
+                      ? 'bg-[#74c004] text-[#080e1e] shadow-md shadow-[#74c004]/20'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Payment Status Filter */}
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0b1329] border border-white/10 overflow-x-auto">
+              <span className="text-[10px] uppercase font-bold text-slate-400 px-2">Payment:</span>
+              {[
+                { id: 'ALL', label: 'All' },
+                { id: 'pending', label: 'Pending Pay' },
+                { id: 'verified', label: 'Verified Pay' },
+                { id: 'rejected', label: 'Rejected Pay' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setFilterPayStatus(tab.id as any)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
+                    filterPayStatus === tab.id
+                      ? 'bg-amber-400 text-[#080e1e] shadow-md shadow-amber-400/20'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Search Input */}
+          <div className="relative min-w-[260px]">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by team, captain, ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-xl bg-[#0b1329] border border-white/10 pl-9 pr-3 py-2 text-xs font-semibold text-white placeholder:text-slate-500 focus:border-[#74c004] focus:outline-none"
+            />
+          </div>
+
         </div>
       </div>
 
@@ -218,7 +300,7 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
         </div>
       ) : filteredList.length === 0 ? (
         <div className="p-12 text-center rounded-2xl bg-[#0b1329] border border-white/10 text-slate-400 text-xs">
-          No registrations found matching the selected filter.
+          No registrations found matching the selected filters.
         </div>
       ) : (
         <div className="space-y-4">
@@ -226,16 +308,19 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
             const isExpanded = expandedRegId === reg._id
             const isApproved = reg.registrationStatus === 'approved'
             const isRejected = reg.registrationStatus === 'rejected'
+            const isPaymentVerified = reg.paymentStatus === 'verified'
+            const isPaymentRejected = reg.paymentStatus === 'rejected'
 
             const mainList = (reg.players || []).filter((p) => !p.isSubstitute)
             const substituteList = (reg.players || []).filter((p) => p.isSubstitute)
+            const regFee = reg.paymentAmount || reg.eventId?.registrationFee || 1500
 
             return (
               <div
                 key={reg._id}
                 className={`rounded-2xl border transition-all overflow-hidden ${
-                  isApproved
-                    ? 'bg-[#0b1329] border-emerald-500/30'
+                  isApproved && isPaymentVerified
+                    ? 'bg-[#0b1329] border-emerald-500/40 shadow-lg shadow-emerald-500/5'
                     : isRejected
                     ? 'bg-[#0b1329] border-red-500/20 opacity-75'
                     : 'bg-[#0b1329] border-amber-500/30 shadow-lg'
@@ -244,6 +329,8 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
                 {/* Main Card Header */}
                 <div className="p-5 sm:p-6 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+
+                    {/* Team & Captain Details */}
                     <div className="flex items-center gap-3">
                       {reg.teamLogo ? (
                         <img
@@ -270,7 +357,7 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
                           <span>•</span>
                           <span>{reg.captainEmail}</span>
                           <span>•</span>
-                          <span>{reg.captainPhone}</span>
+                          <span>{reg.captainPhone || 'No Phone'}</span>
                           {reg.whatsappNumber && (
                             <>
                               <span>•</span>
@@ -281,29 +368,53 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
                       </div>
                     </div>
 
-                    {/* Status Badge */}
-                    <div className="flex items-center gap-2">
+                    {/* Status Badges: Payment + Squad */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Payment Status Badge */}
                       <span
-                        className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wider ${
-                          isApproved
+                        className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-wider ${
+                          isPaymentVerified
                             ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                            : isRejected
+                            : isPaymentRejected
                             ? 'bg-red-500/20 text-red-300 border border-red-500/40'
                             : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
                         }`}
                       >
-                        {isApproved ? 'Approved' : isRejected ? 'Rejected' : 'Pending Review'}
+                        Payment: {isPaymentVerified ? 'Verified' : isPaymentRejected ? 'Rejected' : 'Pending Verification'}
+                      </span>
+
+                      {/* Squad Registration Status Badge */}
+                      <span
+                        className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-wider ${
+                          isApproved
+                            ? 'bg-[#74c004]/20 text-[#74c004] border border-[#74c004]/40'
+                            : isRejected
+                            ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                            : 'bg-slate-700/50 text-slate-300 border border-slate-600'
+                        }`}
+                      >
+                        Squad: {isApproved ? 'Approved' : isRejected ? 'Rejected' : 'Pending Review'}
                       </span>
                     </div>
+
                   </div>
 
-                  {/* Summary & Actions Row */}
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-3 border-t border-white/10 text-xs">
+                  {/* Summary Details & Admin Action Buttons */}
+                  <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pt-3 border-t border-white/10 text-xs">
+
+                    {/* Amount, Squad & Screenshot metadata */}
                     <div className="flex flex-wrap items-center gap-5 text-slate-300">
+                      <div>
+                        <span className="text-slate-500 block text-[10px] uppercase font-bold">Registration Fee</span>
+                        <span className="font-bold text-[#74c004] font-mono">
+                          ₹{regFee.toLocaleString()}
+                        </span>
+                      </div>
+
                       <div>
                         <span className="text-slate-500 block text-[10px] uppercase font-bold">Squad Size</span>
                         <span className="font-bold text-white">
-                          {mainList.length} Main + {substituteList.length} Substitute
+                          {mainList.length} Main + {substituteList.length} Sub
                         </span>
                       </div>
 
@@ -313,44 +424,76 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
                         {reg.paymentProof ? (
                           <button
                             type="button"
-                            onClick={() => setSelectedProofImg({ src: reg.paymentProof!, team: reg.teamName })}
+                            onClick={() => setSelectedProofImg({ src: reg.paymentProof!, team: reg.teamName, amount: regFee })}
                             className="inline-flex items-center gap-1.5 text-[#74c004] hover:text-[#86dc05] font-bold cursor-pointer underline"
                           >
                             <ImageIcon className="h-3.5 w-3.5" />
-                            <span>View Screenshot</span>
+                            <span>View Proof</span>
                           </button>
                         ) : (
-                          <span className="text-slate-400 italic">No payment screenshot uploaded</span>
+                          <span className="text-slate-400 italic">No screenshot uploaded</span>
                         )}
                       </div>
                     </div>
 
                     {/* Action Controls for Admin */}
-                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                    <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-end">
+
                       {/* Toggle Roster Accordion */}
                       <button
                         type="button"
                         onClick={() => setExpandedRegId(isExpanded ? null : reg._id)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/15 px-3 py-1.5 text-xs font-bold text-slate-300 transition-colors cursor-pointer"
+                        className="inline-flex items-center gap-1 rounded-lg bg-white/10 hover:bg-white/15 px-2.5 py-1.5 text-xs font-bold text-slate-300 transition-colors cursor-pointer"
                       >
-                        <span>{isExpanded ? 'Hide Details' : 'View Full Details'}</span>
+                        <span>{isExpanded ? 'Hide Details' : 'Details'}</span>
                         {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                       </button>
 
-                      {/* Single Verify Registration Button */}
+                      {/* Payment Verification Buttons */}
+                      {!isPaymentVerified && (
+                        <button
+                          type="button"
+                          disabled={actionLoadingId === reg._id}
+                          onClick={() => handleVerifyPayment(reg._id)}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-[#080e1e] px-3 py-1.5 text-xs font-black uppercase shadow-md shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
+                          title="Verify payment receipt"
+                        >
+                          {actionLoadingId === reg._id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Check className="h-3.5 w-3.5 stroke-[3]" />
+                          )}
+                          <span>Verify Payment</span>
+                        </button>
+                      )}
+
+                      {!isPaymentRejected && !isPaymentVerified && (
+                        <button
+                          type="button"
+                          disabled={actionLoadingId === reg._id}
+                          onClick={() => setRejectPrompt({ id: reg._id, type: 'PAYMENT' })}
+                          className="rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-2.5 py-1.5 text-xs font-bold uppercase transition-colors cursor-pointer"
+                          title="Reject invalid payment receipt"
+                        >
+                          Reject Payment
+                        </button>
+                      )}
+
+                      {/* Squad Approval Buttons */}
                       {!isApproved && (
                         <button
                           type="button"
                           disabled={actionLoadingId === reg._id}
-                          onClick={() => handleVerifyRegistration(reg._id)}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-[#74c004] hover:bg-[#86dc05] text-[#080e1e] px-4 py-1.5 text-xs font-black uppercase shadow-md shadow-[#74c004]/20 transition-all cursor-pointer disabled:opacity-50"
+                          onClick={() => handleApproveRegistration(reg._id)}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-[#74c004] hover:bg-[#86dc05] text-[#080e1e] px-3 py-1.5 text-xs font-black uppercase shadow-md shadow-[#74c004]/20 transition-all cursor-pointer disabled:opacity-50"
+                          title="Approve team squad registration"
                         >
                           {actionLoadingId === reg._id ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           ) : (
                             <CheckCircle2 className="h-3.5 w-3.5" />
                           )}
-                          <span>Verify Registration</span>
+                          <span>Approve Squad</span>
                         </button>
                       )}
 
@@ -358,12 +501,10 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
                         <button
                           type="button"
                           disabled={actionLoadingId === reg._id}
-                          onClick={() => {
-                            setRejectPromptId(reg._id)
-                          }}
-                          className="rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 px-3 py-1.5 text-xs font-bold uppercase transition-colors cursor-pointer"
+                          onClick={() => setRejectPrompt({ id: reg._id, type: 'REGISTRATION' })}
+                          className="rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-2.5 py-1.5 text-xs font-bold uppercase transition-colors cursor-pointer"
                         >
-                          Reject
+                          Reject Squad
                         </button>
                       )}
 
@@ -372,12 +513,12 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
                         type="button"
                         disabled={actionLoadingId === reg._id}
                         onClick={() => setDeletePromptId(reg._id)}
-                        className="inline-flex items-center gap-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 px-3 py-1.5 text-xs font-bold uppercase transition-colors cursor-pointer"
+                        className="inline-flex items-center gap-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 px-2.5 py-1.5 text-xs font-bold uppercase transition-colors cursor-pointer"
                         title="Permanently remove registration"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                        <span>Delete</span>
                       </button>
+
                     </div>
                   </div>
                 </div>
@@ -385,12 +526,16 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
                 {/* Expanded Player Roster & Screenshot View */}
                 {isExpanded && (
                   <div className="bg-black/30 p-5 border-t border-white/10 space-y-5 animate-in fade-in">
+
                     {/* Payment Screenshot Preview Section */}
                     <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-2">
                           <ImageIcon className="h-4 w-4 text-[#74c004]" />
-                          <span>Payment Screenshot</span>
+                          <span>Payment Receipt & Proof Details</span>
+                        </span>
+                        <span className="text-xs font-mono font-bold text-[#74c004]">
+                          Fee: ₹{regFee.toLocaleString()}
                         </span>
                       </div>
 
@@ -399,25 +544,36 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
                           <img
                             src={reg.paymentProof}
                             alt={`Payment Screenshot - ${reg.teamName}`}
-                            className="h-32 w-auto rounded-lg object-contain bg-black/50 border border-white/10 cursor-pointer hover:opacity-90"
-                            onClick={() => setSelectedProofImg({ src: reg.paymentProof!, team: reg.teamName })}
+                            className="h-36 w-auto rounded-lg object-contain bg-black/50 border border-white/10 cursor-pointer hover:opacity-90"
+                            onClick={() => setSelectedProofImg({ src: reg.paymentProof!, team: reg.teamName, amount: regFee })}
                           />
-                          <div className="space-y-1 text-xs">
-                            <p className="text-white font-bold">Screenshot uploaded by {reg.captainName}</p>
-                            <p className="text-slate-400">Click thumbnail to expand full resolution receipt image.</p>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedProofImg({ src: reg.paymentProof!, team: reg.teamName })}
-                              className="inline-flex items-center gap-1.5 text-[#74c004] hover:underline font-bold pt-1 cursor-pointer"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" />
-                              <span>Open Full Screenshot</span>
-                            </button>
+                          <div className="space-y-1.5 text-xs">
+                            <p className="text-white font-bold">Screenshot submitted by {reg.captainName}</p>
+                            <p className="text-slate-400">Review UTR / Transaction ID and payment amount before verifying.</p>
+                            <div className="flex items-center gap-3 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedProofImg({ src: reg.paymentProof!, team: reg.teamName, amount: regFee })}
+                                className="inline-flex items-center gap-1 text-[#74c004] hover:underline font-bold cursor-pointer"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                <span>Expand Screenshot</span>
+                              </button>
+                              {!isPaymentVerified && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleVerifyPayment(reg._id)}
+                                  className="rounded bg-amber-500 hover:bg-amber-400 text-[#080e1e] px-2.5 py-1 text-[11px] font-bold uppercase transition-colors cursor-pointer"
+                                >
+                                  Verify Payment Now
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       ) : (
                         <div className="p-3 rounded-lg bg-black/20 text-slate-400 text-xs italic">
-                          No payment screenshot uploaded
+                          No payment screenshot uploaded with this registration.
                         </div>
                       )}
                     </div>
@@ -471,74 +627,93 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
         </div>
       )}
 
-      {/* Payment Proof Modal */}
+      {/* Payment Proof Full Image Modal */}
       {selectedProofImg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4">
-          <div className="relative max-w-2xl max-h-[85vh] p-4 bg-[#0b1329] rounded-2xl border border-white/10 space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-white/10">
-              <span className="text-xs font-bold uppercase text-white">
-                Payment Screenshot • {selectedProofImg.team}
-              </span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm">
+          <div className="relative max-w-3xl w-full max-h-[90vh] p-5 bg-[#0b1329] rounded-2xl border border-white/10 space-y-3">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div>
+                <span className="text-xs font-bold uppercase text-white block">
+                  Payment Receipt • {selectedProofImg.team}
+                </span>
+                {selectedProofImg.amount && (
+                  <span className="text-xs text-[#74c004] font-mono font-bold">
+                    Expected Fee: ₹{selectedProofImg.amount.toLocaleString()}
+                  </span>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => setSelectedProofImg(null)}
-                className="rounded-full bg-white/10 text-white p-1.5 hover:bg-white/20"
+                className="rounded-full bg-white/10 text-white p-1.5 hover:bg-white/20 cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="overflow-auto max-h-[70vh] flex items-center justify-center">
+            <div className="overflow-auto max-h-[72vh] flex items-center justify-center p-2 bg-black/50 rounded-xl">
               <img
                 src={selectedProofImg.src}
-                alt="Payment Proof"
-                className="max-h-[70vh] w-auto rounded-xl object-contain"
+                alt="Payment Receipt"
+                className="max-h-[70vh] w-auto rounded-lg object-contain shadow-2xl"
               />
             </div>
           </div>
         </div>
       )}
 
-      {/* Reject Prompt Modal */}
-      {rejectPromptId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-[#0b1329] border border-red-500/30 p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between pb-2 border-b border-white/10">
-              <h3 className="text-sm font-bold uppercase text-red-400">
-                Reject Registration
-              </h3>
+      {/* Reject Prompt Modal (Payment or Registration) */}
+      {rejectPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-[#0b1329] rounded-2xl border border-red-500/30 p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <span className="font-display text-sm font-bold uppercase text-red-400">
+                {rejectPrompt.type === 'PAYMENT' ? 'Reject Payment Receipt' : 'Reject Squad Registration'}
+              </span>
               <button
                 type="button"
-                onClick={() => setRejectPromptId(null)}
+                onClick={() => {
+                  setRejectPrompt(null)
+                  setRejectReason('')
+                }}
                 className="text-slate-400 hover:text-white"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs text-slate-300 block">Reason for Rejection (Optional)</label>
-              <textarea
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="e.g. Incomplete squad roster or invalid details..."
-                className="w-full rounded-xl bg-white/5 border border-white/10 p-3 text-xs text-white focus:border-red-500 focus:outline-none"
-                rows={3}
-              />
-            </div>
+            <p className="text-xs text-slate-300">
+              {rejectPrompt.type === 'PAYMENT'
+                ? 'Please specify why this payment proof is being rejected (e.g. invalid transaction reference, incorrect amount, unreadable screenshot):'
+                : 'Please specify the reason for rejecting this team registration:'}
+            </p>
+
+            <textarea
+              rows={3}
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Enter rejection reason..."
+              className="w-full rounded-xl border border-white/15 bg-[#080e1e] p-3 text-xs text-white placeholder:text-slate-500 focus:border-red-400 focus:outline-none"
+            />
 
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setRejectPromptId(null)}
-                className="px-4 py-2 rounded-xl bg-white/10 text-xs font-bold text-slate-300"
+                onClick={() => {
+                  setRejectPrompt(null)
+                  setRejectReason('')
+                }}
+                className="rounded-xl border border-white/15 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-white/5"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={actionLoadingId === rejectPromptId}
-                onClick={handleConfirmReject}
-                className="px-5 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-xs font-black uppercase text-white shadow-md shadow-red-500/30"
+                onClick={
+                  rejectPrompt.type === 'PAYMENT'
+                    ? handleConfirmRejectPayment
+                    : handleConfirmRejectRegistration
+                }
+                className="rounded-xl bg-red-600 hover:bg-red-500 px-4 py-2 text-xs font-bold text-white uppercase"
               >
                 Confirm Rejection
               </button>
@@ -549,51 +724,37 @@ export function AdminRegistrationsView({ tournamentId }: { tournamentId?: string
 
       {/* Delete Confirmation Modal */}
       {deletePromptId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-[#0b1329] border border-rose-500/30 p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between pb-2 border-b border-white/10">
-              <h3 className="text-sm font-bold uppercase text-rose-400 flex items-center gap-2">
-                <Trash2 className="h-4 w-4" />
-                <span>Delete Registration</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setDeletePromptId(null)}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="h-4 w-4" />
-              </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-[#0b1329] rounded-2xl border border-rose-500/30 p-6 space-y-4 text-center">
+            <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-rose-500/20 text-rose-400">
+              <Trash2 className="h-6 w-6" />
             </div>
-
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Are you sure you want to permanently delete this registration? This will remove the team from the tournament roster, groups, and any upcoming match fixtures. This action cannot be undone.
-            </p>
-
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="space-y-1">
+              <h4 className="font-bold text-white uppercase text-sm">Permanently Delete Registration?</h4>
+              <p className="text-xs text-slate-400">
+                This will delete the registration and remove the team from tournament groups and fixtures. This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex justify-center gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => setDeletePromptId(null)}
-                className="px-4 py-2 rounded-xl bg-white/10 text-xs font-bold text-slate-300"
+                className="rounded-xl border border-white/15 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-white/5"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={actionLoadingId === deletePromptId}
                 onClick={handleConfirmDelete}
-                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-xs font-black uppercase text-white shadow-md shadow-rose-600/30 cursor-pointer disabled:opacity-50"
+                className="rounded-xl bg-rose-600 hover:bg-rose-500 px-4 py-2 text-xs font-bold text-white uppercase"
               >
-                {actionLoadingId === deletePromptId ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="h-3.5 w-3.5" />
-                )}
-                <span>Confirm Delete</span>
+                Delete Permanently
               </button>
             </div>
           </div>
         </div>
       )}
+
     </div>
   )
 }

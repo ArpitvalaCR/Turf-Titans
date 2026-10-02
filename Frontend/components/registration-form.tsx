@@ -18,9 +18,24 @@ import {
   AlertCircle,
   FileCheck2,
   Clock,
-  ShieldAlert
+  ShieldAlert,
+  QrCode,
+  Smartphone,
+  CreditCard,
+  Search,
+  ExternalLink,
+  RefreshCw,
+  X,
+  FileImage
 } from 'lucide-react'
-import { submitRegistration, getEventRegistrationCount } from '@/lib/services'
+import {
+  submitRegistration,
+  getEventRegistrationCount,
+  getEvent,
+  getRegistrationStatus,
+  Event as EventType,
+  AdminRegistrationItem
+} from '@/lib/services'
 import { useAuth } from '@/lib/auth-context'
 
 // Exactly 10 Main Playing + 1 Substitute (11 total entries)
@@ -38,13 +53,20 @@ const initialRoster = [
   { id: 11, name: '', role: 'Batsman', isCaptain: false, isSubstitute: true }, // 1 Substitute
 ]
 
+const UPI_ID = 'arpitvala16@oksbi'
+
 export function RegistrationForm({ defaultEventId }: { defaultEventId?: string } = {}) {
   const searchParams = useSearchParams()
   const eventId = defaultEventId || searchParams.get('eventId')
-  const { user, isAdmin } = useAuth()
+  const { user, isAuthenticated, isAdmin } = useAuth()
 
   const [registrationId, setRegistrationId] = useState('TT-REG-NEW')
   const [copiedId, setCopiedId] = useState(false)
+  const [copiedUpi, setCopiedUpi] = useState(false)
+
+  // Event & Pricing state
+  const [eventData, setEventData] = useState<EventType | null>(null)
+  const [eventLoading, setEventLoading] = useState(false)
 
   // Captain & Contact state
   const [captainName, setCaptainName] = useState(user?.name || '')
@@ -59,23 +81,52 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
   // Roster state (10 Main Playing + 1 Substitute = 11 total)
   const [players, setPlayers] = useState(initialRoster)
 
-  // Optional Payment Screenshot (no UTR/Transaction fields)
+  // Payment Screenshot state
   const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null)
+  const [paymentProofFile, setPaymentProofFile] = useState<{ name: string; size: string } | null>(null)
+  const [paymentProofError, setPaymentProofError] = useState('')
   const [declaration, setDeclaration] = useState(false)
 
   const [loading, setLoading] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+  const [submittedData, setSubmittedData] = useState<any>(null)
   const [error, setError] = useState('')
   const [regCount, setRegCount] = useState<{ registeredTeams: number; maxTeams: number } | null>(null)
+
+  // Status Lookup Modal / State
+  const [lookupOpen, setLookupOpen] = useState(false)
+  const [lookupQuery, setLookupQuery] = useState('')
+  const [lookupLoading, setLookupLoading] = useState(false)
+  const [lookupResult, setLookupResult] = useState<AdminRegistrationItem | null>(null)
+  const [lookupError, setLookupError] = useState('')
+
+  // Dynamic fee calculation from selected event
+  const registrationFee = typeof eventData?.registrationFee === 'number' ? eventData.registrationFee : 1500
+  const dynamicUpiUrl = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent('Turf Titans')}&am=${registrationFee}&cu=INR`
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(dynamicUpiUrl)}`
 
   useEffect(() => {
     const randomNum = Math.floor(1000 + Math.random() * 9000)
     setRegistrationId(`TT-2025-REG-${randomNum}`)
 
-    if (eventId && /^[0-9a-fA-F]{24}$/.test(eventId)) {
-      getEventRegistrationCount(eventId)
-        .then((data) => setRegCount(data))
-        .catch(() => setRegCount(null))
+    if (eventId) {
+      setEventLoading(true)
+      getEvent(eventId)
+        .then((data) => {
+          setEventData(data)
+        })
+        .catch(() => {
+          setEventData(null)
+        })
+        .finally(() => {
+          setEventLoading(false)
+        })
+
+      if (/^[0-9a-fA-F]{24}$/.test(eventId)) {
+        getEventRegistrationCount(eventId)
+          .then((data) => setRegCount(data))
+          .catch(() => setRegCount(null))
+      }
     }
   }, [eventId])
 
@@ -124,8 +175,33 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
   }
 
   const handleProofUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPaymentProofError('')
     const file = e.target.files?.[0]
     if (!file) return
+
+    // Validate file type (image only)
+    const validImageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg']
+    if (!validImageTypes.includes(file.type)) {
+      setPaymentProofError('Invalid file format. Please upload an image (PNG, JPG, JPEG, WEBP).')
+      e.target.value = ''
+      return
+    }
+
+    // Validate file size (max 5MB)
+    const maxSizeBytes = 5 * 1024 * 1024
+    if (file.size > maxSizeBytes) {
+      setPaymentProofError('File is too large. Payment screenshot must be under 5MB.')
+      e.target.value = ''
+      return
+    }
+
+    // Format file size string
+    const sizeInMb = (file.size / (1024 * 1024)).toFixed(2)
+    setPaymentProofFile({
+      name: file.name,
+      size: `${sizeInMb} MB`,
+    })
+
     const reader = new FileReader()
     reader.onload = (event) => {
       setPaymentProofPreview(event.target?.result as string)
@@ -133,10 +209,45 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
     reader.readAsDataURL(file)
   }
 
+  const handleRemoveProof = () => {
+    setPaymentProofPreview(null)
+    setPaymentProofFile(null)
+    setPaymentProofError('')
+  }
+
   const handleCopyId = () => {
     navigator.clipboard.writeText(registrationId)
     setCopiedId(true)
     setTimeout(() => setCopiedId(false), 2000)
+  }
+
+  const handleCopyUpi = () => {
+    navigator.clipboard.writeText(UPI_ID)
+    setCopiedUpi(true)
+    setTimeout(() => setCopiedUpi(false), 2000)
+  }
+
+  const handleLookupStatus = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!lookupQuery.trim()) return
+
+    if (!isAuthenticated) {
+      setLookupError('Please Sign In to view your registered squad status')
+      return
+    }
+
+    setLookupLoading(true)
+    setLookupError('')
+    setLookupResult(null)
+
+    try {
+      const res = await getRegistrationStatus(lookupQuery.trim())
+      setLookupResult(res)
+    } catch (err: any) {
+      setLookupError(err?.message || 'Registration not found. Please check your Registration ID or Email.')
+    } finally {
+      setLookupLoading(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -172,7 +283,7 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
         isSubstitute: Boolean(p.isSubstitute),
       }))
 
-      await submitRegistration({
+      const payload = {
         registrationId,
         teamName: teamName.trim() || 'Unnamed Squad',
         teamLogo: teamLogoPreview,
@@ -180,12 +291,15 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
         captainEmail: emailAddress.trim() || 'contact@turftitans.com',
         captainPhone: mobileNumber.trim(),
         whatsappNumber: whatsappNumber.trim(),
-        sport: 'cricket',
+        sport: eventData?.sport || 'cricket',
         paymentProof: paymentProofPreview,
         players: formattedPlayers,
         eventId: targetEventId,
-      })
+      }
 
+      const res = await submitRegistration(payload)
+
+      setSubmittedData(res)
       setSubmitted(true)
     } catch (err: any) {
       setError(err?.message || 'Registration submission failed. Please verify inputs and try again.')
@@ -216,7 +330,7 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
           </div>
           <div className="pt-2">
             <Link
-              href="/tournaments/turf-titans-2025?tab=registrations"
+              href="/tournaments/turf-titans-2025?tab=registration"
               className="inline-flex items-center gap-2 rounded-xl bg-[#74c004] hover:bg-[#86dc05] px-6 py-3 text-xs font-black uppercase tracking-wider text-[#060b18] shadow-md transition-all"
             >
               <FileCheck2 className="h-4 w-4" />
@@ -244,9 +358,19 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 text-amber-300 text-[11px] uppercase tracking-wider font-semibold">
-            <ShieldCheck className="h-4 w-4 text-amber-400" />
-            <span>Admin Review & Verification</span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setLookupOpen(true)}
+              className="inline-flex items-center gap-1.5 text-xs text-amber-300 hover:text-amber-200 underline font-bold cursor-pointer"
+            >
+              <Search className="h-3.5 w-3.5" />
+              <span>Check Payment & Registration Status</span>
+            </button>
+            <div className="hidden sm:flex items-center gap-1.5 text-amber-300 text-[11px] uppercase tracking-wider font-semibold">
+              <ShieldCheck className="h-4 w-4 text-amber-400" />
+              <span>Admin Review & Verification</span>
+            </div>
           </div>
         </div>
       </div>
@@ -259,43 +383,40 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
               <Link href="/tournaments" className="hover:text-[#74c004] transition-colors">
                 ← TOURNAMENTS
               </Link>
-              <span>/</span>
-              <span className="text-[#74c004]">OFFICIAL SQUAD REGISTRATION</span>
+              <span>•</span>
+              <span className="text-[#74c004]">{eventData?.title || 'TURF TITANS 2025'}</span>
             </div>
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black font-display uppercase tracking-tight text-white leading-none">
-              TEAM REGISTRATION & <span className="text-[#74c004]">SQUAD ROSTER</span>
+            <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl font-black uppercase tracking-wider text-white">
+              OFFICIAL TEAM ENTRY PASS
             </h1>
-            <p className="text-sm text-slate-300 max-w-2xl font-medium">
-              Submit your official 10 Main Players + 1 Substitute team roster. Once reviewed and verified by the tournament desk, your team will be seeded into tournament groups.
+            <p className="text-xs sm:text-sm text-slate-300 max-w-2xl font-medium">
+              Submit your team lineup and complete registration fee via UPI. Registrations are logged in <span className="text-amber-400 font-bold">Pending Verification</span> until tournament administrators verify payment and squad rosters.
             </p>
           </div>
 
           {/* Floating Registration ID card */}
-          <div className="rounded-2xl border border-white/15 bg-[#0f182e] p-5 shadow-xl min-w-[280px]">
-            <div className="flex items-center justify-between gap-4 mb-1">
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                REGISTRATION ID
-              </span>
-              <span className="rounded-full bg-[#74c004]/20 border border-[#74c004]/40 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-[#74c004]">
-                AUTO-GENERATED
-              </span>
+          <div className="flex items-center gap-3 rounded-2xl border border-white/15 bg-[#0f182e] p-4 shadow-xl shrink-0">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#74c004]/10 border border-[#74c004]/30 text-[#74c004]">
+              <ShieldCheck className="h-5 w-5" />
             </div>
-            <div className="flex items-center justify-between gap-3 mt-1">
-              <span className="font-mono text-xl sm:text-2xl font-black tracking-wider text-white">
-                {registrationId}
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                APPLICATION REF ID
               </span>
-              <button
-                type="button"
-                onClick={handleCopyId}
-                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-colors border border-white/10 cursor-pointer"
-                title="Copy Registration ID"
-              >
-                {copiedId ? <Check className="h-4 w-4 text-[#74c004]" /> : <Copy className="h-4 w-4" />}
-              </button>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm sm:text-base font-bold text-white tracking-wide">
+                  {registrationId}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyId}
+                  className="rounded bg-white/10 hover:bg-white/20 p-1 text-slate-300 transition-colors cursor-pointer"
+                  title="Copy Registration ID"
+                >
+                  {copiedId ? <Check className="h-3.5 w-3.5 text-[#74c004]" /> : <Copy className="h-3.5 w-3.5" />}
+                </button>
+              </div>
             </div>
-            <p className="text-[10px] text-slate-400 mt-1 font-medium">
-              Reference ID for registration verification & scorecards
-            </p>
           </div>
         </div>
       </div>
@@ -311,8 +432,9 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
             </div>
 
             <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 rounded-full bg-amber-500/20 border border-amber-500/40 px-3 py-1 text-xs font-black uppercase tracking-wider text-amber-300">
-                <span>● Awaiting Admin Verification</span>
+              <div className="inline-flex items-center gap-2 rounded-full bg-amber-500/20 border border-amber-500/40 px-3.5 py-1 text-xs font-black uppercase tracking-wider text-amber-300">
+                <Clock className="h-3.5 w-3.5" />
+                <span>Payment & Registration: Pending Verification</span>
               </div>
               <h2 className="text-3xl sm:text-4xl font-black font-display uppercase tracking-tight text-white">
                 Registration Submitted Successfully!
@@ -336,10 +458,34 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                 <span className="text-slate-400 font-bold uppercase">Captain Contact</span>
                 <span className="font-mono text-white">{mobileNumber} • {emailAddress}</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between border-b border-white/10 pb-2">
+                <span className="text-slate-400 font-bold uppercase">Tournament Fee</span>
+                <span className="font-bold text-white">₹{registrationFee.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between border-b border-white/10 pb-2">
+                <span className="text-slate-400 font-bold uppercase">Payment Status</span>
+                <span className="font-black text-amber-400 uppercase">Pending Admin Verification</span>
+              </div>
+              <div className="flex justify-between border-b border-white/10 pb-2">
                 <span className="text-slate-400 font-bold uppercase">Squad Composition</span>
                 <span className="font-bold text-[#74c004]">10 Main Players + 1 Substitute</span>
               </div>
+              {paymentProofPreview && (
+                <div className="pt-2">
+                  <span className="text-slate-400 font-bold uppercase block mb-1.5">Attached Payment Screenshot</span>
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={paymentProofPreview}
+                      alt="Payment Receipt"
+                      className="h-16 w-16 object-cover rounded-lg border border-amber-500/40 bg-black/40"
+                    />
+                    <div className="text-[11px] text-slate-300">
+                      <p className="font-semibold text-white">{paymentProofFile?.name || 'payment-screenshot.png'}</p>
+                      <p className="text-slate-400">Uploaded for administrator verification</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="rounded-xl bg-white/5 border border-white/10 p-4 max-w-lg mx-auto text-xs text-slate-300 space-y-1">
@@ -348,7 +494,7 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                 <span>Next Step: Admin Verification</span>
               </p>
               <p className="text-slate-400">
-                The tournament desk will verify your squad roster. Once approved, your team will be placed into the tournament draw and you can view live match schedules.
+                The tournament desk will verify your payment screenshot and squad lineup. Once verified, your status will update to <strong className="text-emerald-400">Payment Verified</strong> and your team will be entered into tournament fixtures.
               </p>
             </div>
 
@@ -371,6 +517,7 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                   setWhatsappNumber('')
                   setTeamLogoPreview(null)
                   setPaymentProofPreview(null)
+                  setPaymentProofFile(null)
                   setPlayers(initialRoster)
                   setDeclaration(false)
                 }}
@@ -448,19 +595,14 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                       className="w-full rounded-xl border border-white/15 bg-[#080e1e] px-4 py-3 text-sm text-white focus:border-[#74c004] focus:outline-none focus:ring-1 focus:ring-[#74c004] placeholder:text-slate-500"
                     />
                     <span className="text-[11px] text-slate-400 mt-1 block">
-                      Confirmation letter & fixture schedules sent here
+                      Registration slip & verification receipts sent here
                     </span>
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
-                        WHATSAPP NUMBER
-                      </label>
-                      <span className="text-[9px] font-bold uppercase text-slate-400 bg-white/5 px-1.5 py-0.5 rounded">
-                        OPTIONAL
-                      </span>
-                    </div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                      WHATSAPP NUMBER
+                    </label>
                     <input
                       type="tel"
                       value={whatsappNumber}
@@ -469,27 +611,27 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                       className="w-full rounded-xl border border-white/15 bg-[#080e1e] px-4 py-3 text-sm text-white focus:border-[#74c004] focus:outline-none focus:ring-1 focus:ring-[#74c004] placeholder:text-slate-500"
                     />
                     <span className="text-[11px] text-slate-400 mt-1 block">
-                      For official captain WhatsApp announcement group
+                      Added to Official Captains WhatsApp Dispatch
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* SECTION 2: TEAM DETAILS */}
-              <div className="rounded-2xl border border-white/10 bg-[#0f182e] p-6 sm:p-8 shadow-md">
-                <div className="flex items-center justify-between pb-5 border-b border-white/10 mb-6">
+              {/* SECTION 2: TEAM PROFILE */}
+              <div className="rounded-2xl border border-white/10 bg-[#0f182e] p-6 sm:p-8 shadow-md space-y-6">
+                <div className="flex items-center justify-between pb-5 border-b border-white/10">
                   <div className="flex items-center gap-3">
                     <span className="text-lg font-black text-[#74c004]">🛡️</span>
                     <h2 className="font-display text-xl font-bold uppercase tracking-wider text-white">
-                      SECTION 2: TEAM DETAILS & CREST
+                      SECTION 2: TEAM PROFILE
                     </h2>
                   </div>
                   <span className="rounded bg-white/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-slate-300">
-                    CLUB BRAND
+                    SQUAD IDENTITY
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
                       OFFICIAL TEAM NAME <span className="text-red-400">*</span>
@@ -705,73 +847,212 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                 )}
               </div>
 
-              {/* SECTION 4: PAYMENT SCREENSHOT (OPTIONAL ATTACHMENT) */}
-              <div className="rounded-2xl border border-white/10 bg-[#0f182e] p-6 sm:p-8 shadow-md">
-                <div className="flex items-center justify-between pb-5 border-b border-white/10 mb-6">
+              {/* SECTION 4: PAYMENT DETAILS & SCREENSHOT UPLOAD */}
+              <div className="rounded-2xl border border-white/10 bg-[#0f182e] p-6 sm:p-8 shadow-md space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-5 border-b border-white/10 gap-3">
                   <div className="flex items-center gap-3">
-                    <span className="text-lg font-black text-[#74c004]">📸</span>
-                    <h2 className="font-display text-xl font-bold uppercase tracking-wider text-white">
-                      SECTION 4: PAYMENT SCREENSHOT
-                    </h2>
+                    <span className="text-lg font-black text-[#74c004]">💳</span>
+                    <div>
+                      <h2 className="font-display text-xl font-bold uppercase tracking-wider text-white">
+                        SECTION 4: PAYMENT & VERIFICATION
+                      </h2>
+                      <span className="text-[11px] text-slate-400 block font-normal">
+                        Pay tournament entry fee via UPI, then attach your payment screenshot for admin verification.
+                      </span>
+                    </div>
                   </div>
-                  <span className="rounded bg-white/10 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-300">
-                    OPTIONAL UPLOAD
-                  </span>
+                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                    <span className="rounded bg-amber-500/20 border border-amber-500/40 px-3 py-1 text-[11px] font-black uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                      <Clock className="h-3 w-3" />
+                      <span>Status: Pending Verification</span>
+                    </span>
+                  </div>
                 </div>
 
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
-                      ATTACH PAYMENT RECEIPT / SCREENSHOT
-                    </label>
+                {/* 1. PAYMENT OVERVIEW & DETAILS */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 bg-[#080e1e] p-5 sm:p-6 rounded-2xl border border-white/10">
+
+                  {/* Left: Amount & UPI ID & Action */}
+                  <div className="md:col-span-7 space-y-5">
+                    {/* Amount Banner */}
+                    <div className="p-4 rounded-xl bg-gradient-to-br from-[#16223d] to-[#0d1527] border border-white/10 flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">
+                          TOURNAMENT ENTRY FEE
+                        </span>
+                        <div className="text-2xl sm:text-3xl font-black text-[#74c004] font-display">
+                          ₹{registrationFee.toLocaleString()}
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                          {eventData?.title || 'Turf Titans Cricket Championship 2025'}
+                        </span>
+                      </div>
+                      <span className="text-2xl">🏆</span>
+                    </div>
+
+                    {/* UPI ID with Copy button */}
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                        OFFICIAL UPI ID
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 flex items-center justify-between rounded-xl border border-white/15 bg-[#0f182e] px-4 py-3 text-sm font-mono font-bold text-white">
+                          <span>{UPI_ID}</span>
+                          <span className="text-[10px] font-sans font-semibold uppercase text-[#74c004] bg-[#74c004]/10 px-2 py-0.5 rounded">
+                            Verified Receiver
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleCopyUpi}
+                          className="flex items-center gap-1.5 rounded-xl border border-[#74c004]/40 bg-[#74c004]/10 hover:bg-[#74c004]/20 px-4 py-3 text-xs font-bold uppercase text-[#74c004] transition-all cursor-pointer shrink-0"
+                          title="Copy UPI ID"
+                        >
+                          {copiedUpi ? (
+                            <>
+                              <Check className="h-4 w-4" />
+                              <span>Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-4 w-4" />
+                              <span>Copy ID</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Pay via UPI deep link button */}
+                    <div>
+                      <a
+                        href={dynamicUpiUrl}
+                        className="w-full inline-flex items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-[#74c004] to-[#8fe406] hover:from-[#86dc05] hover:to-[#9df809] px-5 py-3.5 text-xs font-black uppercase tracking-wider text-[#080e1e] shadow-lg shadow-[#74c004]/20 transition-all hover:scale-[1.01] active:scale-[0.99]"
+                      >
+                        <Smartphone className="h-4 w-4 stroke-[2.5]" />
+                        <span>Pay via UPI App (₹{registrationFee.toLocaleString()})</span>
+                      </a>
+                      <span className="text-[11px] text-slate-400 block text-center mt-1.5">
+                        Opens your device&apos;s available UPI app (GPay, PhonePe, Paytm, BHIM, etc.)
+                      </span>
+                    </div>
+
+                    {/* Supported apps icons badge */}
+                    <div className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                      <span>Supported Payment Modes:</span>
+                      <span className="text-slate-300">Google Pay • PhonePe • Paytm • BHIM • Cred UPI</span>
+                    </div>
                   </div>
+
+                  {/* Right: QR Code */}
+                  <div className="md:col-span-5 flex flex-col items-center justify-center p-4 rounded-xl bg-[#0f182e] border border-white/10 text-center space-y-3">
+                    <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-slate-300">
+                      <QrCode className="h-4 w-4 text-[#74c004]" />
+                      <span>Scan Payment QR</span>
+                    </div>
+
+                    <div className="relative p-2.5 bg-white rounded-xl shadow-lg">
+                      <img
+                        src={qrCodeUrl}
+                        alt="Turf Titans UPI Payment QR Code"
+                        className="h-40 w-40 sm:h-44 sm:w-44 object-contain rounded"
+                        loading="lazy"
+                      />
+                    </div>
+
+                    <div className="space-y-0.5 text-[11px]">
+                      <p className="font-bold text-white">Scan with any UPI Scanner</p>
+                      <p className="text-slate-400 font-mono">Amount: ₹{registrationFee.toLocaleString()}</p>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* 2. STEP-BY-STEP PAYMENT INSTRUCTIONS */}
+                <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-2 text-xs">
+                  <span className="font-black uppercase tracking-wider text-slate-200 block text-[11px]">
+                    📋 Payment & Verification Instructions:
+                  </span>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-300 leading-relaxed font-medium">
+                    <li>Pay <strong className="text-white font-bold">₹{registrationFee.toLocaleString()}</strong> using the <strong>Pay via UPI</strong> button or by scanning the QR code above.</li>
+                    <li>Complete the transaction in your chosen UPI application (GPay, PhonePe, Paytm, etc.).</li>
+                    <li>Take a clear screenshot of the completed payment receipt showing the transaction reference / UTR.</li>
+                    <li>Upload the payment screenshot in the field below before clicking submit.</li>
+                    <li>Your submission will enter <strong className="text-amber-300">Pending Verification</strong> until reviewed and confirmed by administrators.</li>
+                  </ol>
+                </div>
+
+                {/* 3. UPLOAD PAYMENT SCREENSHOT */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                      UPLOAD PAYMENT SCREENSHOT <span className="text-amber-400">*</span>
+                    </label>
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold">
+                      Max 5MB • PNG, JPG, JPEG, WEBP
+                    </span>
+                  </div>
+
                   <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-xl border-2 border-dashed border-white/15 bg-[#080e1e]/60 p-4 hover:border-[#74c004]/50 transition-colors">
                     <div className="flex items-center gap-3">
                       {paymentProofPreview ? (
                         <img
                           src={paymentProofPreview}
                           alt="Payment Proof"
-                          className="h-14 w-14 rounded-lg object-cover border border-[#74c004]"
+                          className="h-16 w-16 rounded-lg object-cover border border-[#74c004] bg-black/40 shrink-0"
                         />
                       ) : (
-                        <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-white/5 text-slate-400">
-                          <Upload className="h-6 w-6" />
+                        <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-white/5 text-slate-400 shrink-0">
+                          <FileImage className="h-7 w-7 text-slate-400" />
                         </div>
                       )}
                       <div>
                         <p className="text-xs font-bold text-white">
-                          {paymentProofPreview ? 'Payment Screenshot Attached' : 'Attach payment screenshot (optional)'}
+                          {paymentProofPreview
+                            ? `Receipt Attached: ${paymentProofFile?.name || 'payment-proof.png'}`
+                            : 'Upload payment receipt / screenshot'}
                         </p>
                         <p className="text-[10px] text-slate-400">
-                          JPEG, PNG or image file. Allows tournament administrators to verify payment directly.
+                          {paymentProofPreview && paymentProofFile
+                            ? `File size: ${paymentProofFile.size} • Ready for verification`
+                            : 'Image formats only (PNG, JPG, JPEG, WEBP). Proof must clearly display transaction reference.'}
                         </p>
                       </div>
                     </div>
+
                     <div className="flex items-center gap-2 shrink-0">
                       {paymentProofPreview && (
                         <button
                           type="button"
-                          onClick={() => setPaymentProofPreview(null)}
+                          onClick={handleRemoveProof}
                           className="rounded-lg border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 px-3 py-2 text-xs font-bold text-red-300 transition-colors cursor-pointer"
                         >
                           Remove
                         </button>
                       )}
                       <label className="rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-200 transition-colors shrink-0 cursor-pointer">
-                        <span>{paymentProofPreview ? 'Change Screenshot' : 'Browse File'}</span>
+                        <span>{paymentProofPreview ? 'Change Screenshot' : 'Browse Screenshot'}</span>
                         <input
                           type="file"
-                          accept="image/*"
+                          accept="image/png, image/jpeg, image/jpg, image/webp"
                           onChange={handleProofUpload}
                           className="hidden"
                         />
                       </label>
                     </div>
                   </div>
+
+                  {paymentProofError && (
+                    <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-300 font-semibold flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+                      <span>{paymentProofError}</span>
+                    </div>
+                  )}
                 </div>
+
               </div>
 
-              {/* SECTION 5: FINAL DECLARATION */}
+              {/* SECTION 5: FINAL DECLARATION & SUBMISSION */}
               <div className="rounded-2xl border border-white/10 bg-[#0f182e] p-6 sm:p-8 shadow-md space-y-6">
                 <div className="flex items-center gap-3 pb-4 border-b border-white/10">
                   <span className="text-lg font-black text-[#74c004]">✅</span>
@@ -788,7 +1069,7 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                     className="mt-1 h-4 w-4 rounded border-white/20 bg-[#080e1e] text-[#74c004] accent-[#74c004] focus:ring-0"
                   />
                   <span className="text-xs sm:text-sm text-slate-300 leading-relaxed font-medium">
-                    I confirm that the roster provided (10 Main Players + 1 Substitute) is accurate. I agree to Turf Titans tournament rules, code of conduct, and understand that registration is subject to Admin verification.
+                    I confirm that the roster provided (10 Main Players + 1 Substitute) and the payment details submitted are accurate. I agree to Turf Titans tournament rules, code of conduct, and understand that registration is subject to Admin verification.
                   </span>
                 </label>
 
@@ -802,7 +1083,10 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                 <div className="flex flex-col sm:flex-row items-center gap-4 pt-2">
                   <button
                     type="button"
-                    className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 px-6 py-4 text-xs font-black uppercase tracking-wider text-slate-200 transition-colors"
+                    onClick={() => {
+                      alert('Draft saved in your current browser session!')
+                    }}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 px-6 py-4 text-xs font-black uppercase tracking-wider text-slate-200 transition-colors cursor-pointer"
                   >
                     <Bookmark className="h-4 w-4" />
                     <span>SAVE DRAFT</span>
@@ -832,7 +1116,7 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                       ENTRY PASS
                     </span>
                     <h3 className="font-display text-lg font-black uppercase tracking-wider text-white">
-                      SEASON 2025 SLOT PASS
+                      {eventData?.title || 'SEASON 2025 SLOT PASS'}
                     </h3>
                   </div>
                   <span className="text-xl">🎟️</span>
@@ -872,12 +1156,16 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                         ? `${Math.round((regCount.registeredTeams / regCount.maxTeams) * 100)}% BOOKED`
                         : 'OFFICIAL PORTAL'}
                     </span>
-                    <span>LUSH TURF MIRA RD</span>
+                    <span>{eventData?.venue || 'LUSH TURF ARENA'}</span>
                   </div>
                 </div>
 
-                {/* Roster Breakdown */}
+                {/* Roster & Fee Breakdown */}
                 <div className="space-y-2 pt-2 border-t border-white/10 text-xs font-semibold">
+                  <div className="flex justify-between text-slate-300">
+                    <span>Registration Fee</span>
+                    <span className="font-mono text-[#74c004] font-bold">₹{registrationFee.toLocaleString()}</span>
+                  </div>
                   <div className="flex justify-between text-slate-300">
                     <span>Main Squad Required</span>
                     <span className="font-mono text-white font-bold">10 Players</span>
@@ -902,10 +1190,10 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-1">
                   <div className="flex items-center gap-2 text-amber-300 text-xs font-black uppercase tracking-wider">
                     <Trophy className="h-4 w-4 text-amber-400 shrink-0" />
-                    <span>₹35,000 CASH PRIZE POOL</span>
+                    <span>{eventData?.prizes || '₹35,000 CASH PRIZE POOL'}</span>
                   </div>
                   <p className="text-[11px] text-amber-200/80 font-medium">
-                    Winner: ₹20,000 + Mega Trophy • Runner: ₹10,000
+                    Winner: Mega Trophy & Cash • Runner-up Awards
                   </p>
                 </div>
               </div>
@@ -917,10 +1205,10 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
                   <span>TOURNAMENT VENUE</span>
                 </div>
                 <h4 className="font-display text-lg font-bold text-white uppercase">
-                  Lush Turf Arena
+                  {eventData?.venue || 'Lush Turf Arena'}
                 </h4>
                 <p className="text-xs text-slate-300 leading-relaxed font-medium">
-                  Behind GCC Club, Mira Road East, Mumbai - 401107. Dual court floodlit arenas.
+                  {eventData?.location || 'Behind GCC Club, Mira Road East, Mumbai - 401107. Dual court floodlit arenas.'}
                 </p>
               </div>
 
@@ -966,6 +1254,173 @@ export function RegistrationForm({ defaultEventId }: { defaultEventId?: string }
         )}
 
       </div>
+
+      {/* CHECK REGISTRATION STATUS MODAL */}
+      {lookupOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-lg bg-[#0b1329] border border-white/10 rounded-2xl p-6 shadow-2xl space-y-5 animate-in fade-in">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2 text-white">
+                <Search className="h-4 w-4 text-[#74c004]" />
+                <h3 className="font-display text-lg font-bold uppercase">
+                  Check Registration & Payment Status
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setLookupOpen(false)
+                  setLookupResult(null)
+                  setLookupError('')
+                }}
+                className="rounded-full p-1 bg-white/10 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {!isAuthenticated ? (
+              <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-4">
+                <AlertCircle className="h-7 w-7 text-amber-400 mx-auto" />
+                <div className="space-y-1">
+                  <p className="text-sm text-amber-200 font-semibold">
+                    Please Sign In to view your registered squad status
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    Squad status lookups are restricted to the registered captain account.
+                  </p>
+                </div>
+                <Link
+                  href="/login"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#74c004] hover:bg-[#86dc05] px-5 py-2.5 text-xs font-bold uppercase text-[#080e1e] transition-colors shadow-lg shadow-[#74c004]/20"
+                >
+                  <span>Sign In</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            ) : (
+              <form onSubmit={handleLookupStatus} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                    Enter Registration ID or Captain Email
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. TT-2025-REG-1234 or captain@email.com"
+                      value={lookupQuery}
+                      onChange={(e) => setLookupQuery(e.target.value)}
+                      className="flex-1 rounded-xl border border-white/15 bg-[#080e1e] px-4 py-2.5 text-xs text-white placeholder:text-slate-500 focus:border-[#74c004] focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={lookupLoading}
+                      className="rounded-xl bg-[#74c004] hover:bg-[#86dc05] px-4 py-2.5 text-xs font-bold uppercase text-[#080e1e] transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {lookupLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                      <span>Lookup</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {lookupError && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-300 font-semibold flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+                  <span>{lookupError}</span>
+                </div>
+                {!isAuthenticated && (
+                  <Link
+                    href="/login"
+                    className="text-[#74c004] underline hover:text-[#86dc05] font-bold text-xs shrink-0"
+                  >
+                    Login
+                  </Link>
+                )}
+              </div>
+            )}
+
+            {lookupResult && (
+              <div className="rounded-xl bg-[#080e1e] border border-white/10 p-4 space-y-3 text-xs">
+                <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                  <div>
+                    <h4 className="font-bold text-white uppercase text-sm">{lookupResult.teamName}</h4>
+                    <span className="font-mono text-slate-400 text-[11px]">{lookupResult.registrationId}</span>
+                  </div>
+                  <div className="text-right space-y-1">
+                    {/* Payment Status Badge */}
+                    <span
+                      className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider ${
+                        lookupResult.paymentStatus === 'verified'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : lookupResult.paymentStatus === 'rejected'
+                          ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      }`}
+                    >
+                      Payment: {lookupResult.paymentStatus === 'verified' ? 'Verified' : lookupResult.paymentStatus === 'rejected' ? 'Rejected' : 'Pending Verification'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-slate-300">
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Captain</span>
+                    <span className="font-semibold text-white">{lookupResult.captainName}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Email</span>
+                    <span className="text-slate-300 truncate block">{lookupResult.captainEmail}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Registration Status</span>
+                    <span
+                      className={`font-black uppercase text-[11px] ${
+                        lookupResult.registrationStatus === 'approved'
+                          ? 'text-emerald-400'
+                          : lookupResult.registrationStatus === 'rejected'
+                          ? 'text-red-400'
+                          : 'text-amber-400'
+                      }`}
+                    >
+                      {lookupResult.registrationStatus === 'approved' ? 'Squad Approved' : lookupResult.registrationStatus === 'rejected' ? 'Registration Rejected' : 'Pending Review'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Squad Size</span>
+                    <span className="font-semibold text-white">{lookupResult.players?.length || 0} Players</span>
+                  </div>
+                </div>
+
+                {lookupResult.rejectionReason && (
+                  <div className="p-2 rounded bg-red-500/10 border border-red-500/30 text-red-300 text-[11px]">
+                    <strong>Note:</strong> {lookupResult.rejectionReason}
+                  </div>
+                )}
+
+                {lookupResult.paymentProof && (
+                  <div className="pt-2 border-t border-white/10 flex items-center justify-between">
+                    <span className="text-slate-400 text-[11px]">Attached Payment Screenshot</span>
+                    <a
+                      href={lookupResult.paymentProof}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[#74c004] hover:underline font-bold text-[11px] inline-flex items-center gap-1"
+                    >
+                      <span>View Receipt</span>
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

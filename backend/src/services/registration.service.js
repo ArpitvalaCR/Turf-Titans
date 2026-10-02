@@ -71,20 +71,28 @@ export const createRegistration = async (data, paymentFile) => {
       }
     }
 
-    if (!data.paymentAmount) {
-      data.paymentAmount = event.registrationFee;
-    }
-  } else if (data.captainEmail) {
-    const normalizedEmail = data.captainEmail.trim().toLowerCase();
-    const duplicateEmail = await Registration.findOne({
-      eventId: null,
-      captainEmail: normalizedEmail,
-    });
+    data.paymentAmount = typeof event.registrationFee === 'number' ? event.registrationFee : 1500;
+  } else {
+    data.paymentAmount = 1500;
+    if (data.captainEmail) {
+      const normalizedEmail = data.captainEmail.trim().toLowerCase();
+      const duplicateEmail = await Registration.findOne({
+        eventId: null,
+        captainEmail: normalizedEmail,
+      });
 
-    if (duplicateEmail) {
-      throw new ApiError(409, 'This email is already registered for this tournament.');
+      if (duplicateEmail) {
+        throw new ApiError(409, 'This email is already registered for this tournament.');
+      }
     }
   }
+
+  // Security: Normal user submissions must ALWAYS start in pending state
+  data.paymentStatus = 'pending';
+  data.registrationStatus = 'pending';
+  data.verifiedBy = null;
+  data.verifiedAt = null;
+  data.rejectionReason = '';
 
   if (paymentFile) {
     const result = await uploadToCloudinary(paymentFile.buffer, {
@@ -92,6 +100,18 @@ export const createRegistration = async (data, paymentFile) => {
       resource_type: 'auto',
     });
     data.paymentProof = result.secure_url;
+  } else if (data.paymentProof && typeof data.paymentProof === 'string' && data.paymentProof.startsWith('data:image/')) {
+    try {
+      const base64Data = data.paymentProof.split(';base64,').pop();
+      const fileBuffer = Buffer.from(base64Data, 'base64');
+      const result = await uploadToCloudinary(fileBuffer, {
+        folder: 'turf-titans/payments',
+        resource_type: 'auto',
+      });
+      data.paymentProof = result.secure_url;
+    } catch (uploadErr) {
+      console.warn('Failed to parse base64 payment proof, storing raw format:', uploadErr.message);
+    }
   }
 
   if (data.players?.length) {
@@ -288,6 +308,37 @@ export const rejectRegistration = async (registrationId, adminId, reason = '') =
     await sendRegistrationRejectedEmail(registration, event);
   } catch (emailError) {
     console.error('Registration rejected email failed:', emailError.message);
+  }
+
+  return registration;
+};
+
+export const getUserRegistrations = async (email) => {
+  if (!email) return [];
+  const normalizedEmail = email.trim().toLowerCase();
+  return Registration.find({ captainEmail: normalizedEmail })
+    .sort({ createdAt: -1 })
+    .populate('eventId', 'title sport venue startDate endDate registrationFee status')
+    .populate('verifiedBy', 'username email');
+};
+
+export const getRegistrationStatusByIdentifier = async (identifier, userEmail, isAdmin = false) => {
+  if (!identifier) throw new ApiError(400, 'Registration identifier is required');
+  const trimmed = identifier.trim();
+  let query = { registrationId: trimmed };
+  if (mongoose.Types.ObjectId.isValid(trimmed)) {
+    query = { $or: [{ registrationId: trimmed }, { _id: trimmed }] };
+  } else if (trimmed.includes('@')) {
+    query = { captainEmail: trimmed.toLowerCase() };
+  }
+  const registration = await Registration.findOne(query)
+    .sort({ createdAt: -1 })
+    .populate('eventId', 'title sport venue startDate endDate registrationFee status');
+  if (!registration) throw new ApiError(404, 'Registration not found');
+
+  // Security: User can only access their own registration unless they are an admin
+  if (!isAdmin && userEmail && registration.captainEmail.toLowerCase() !== userEmail.toLowerCase()) {
+    throw new ApiError(403, 'Forbidden: You are not authorized to view this registration');
   }
 
   return registration;
