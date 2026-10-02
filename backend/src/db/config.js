@@ -38,35 +38,34 @@ async function resolveSrvViaDoH(srvUri) {
 }
 
 const connectDB = async () => {
-  const connectDB = async () => {
-    console.log('MONGO_URI exists:', Boolean(process.env.MONGO_URI));
-    let uri = process.env.MONGO_URI;
-    try {
-      const connectionInstance = await mongoose.connect(uri, {
-        dbName: DB_NAME,
-      });
-      console.log(
-        `MongoDB connected: ${connectionInstance.connection.host}/${DB_NAME}`
-      );
-    } catch (error) {
-      if (uri && uri.startsWith('mongodb+srv://')) {
-        console.warn('Direct SRV resolution failed. Attempting DNS-over-HTTPS fallback resolution...');
-        try {
-          const resolvedUri = await resolveSrvViaDoH(uri);
-          const connectionInstance = await mongoose.connect(resolvedUri, {
-            dbName: DB_NAME,
-          });
-          console.log(
-            `MongoDB connected via DoH fallback: ${connectionInstance.connection.host}/${DB_NAME}`
-          );
-          return;
-        } catch (fallbackError) {
-          console.error('MongoDB fallback connection error:', fallbackError.message);
-        }
+  console.log('MONGO_URI exists:', Boolean(process.env.MONGO_URI));
+  let uri = process.env.MONGO_URI;
+  try {
+    const connectionInstance = await mongoose.connect(uri, {
+      dbName: DB_NAME,
+    });
+    console.log(
+      `MongoDB connected: ${connectionInstance.connection.host}/${DB_NAME}`
+    );
+  } catch (error) {
+    if (uri && uri.startsWith('mongodb+srv://')) {
+      console.warn('Direct SRV resolution failed. Attempting DNS-over-HTTPS fallback resolution...');
+      try {
+        const resolvedUri = await resolveSrvViaDoH(uri);
+        const connectionInstance = await mongoose.connect(resolvedUri, {
+          dbName: DB_NAME,
+        });
+        console.log(
+          `MongoDB connected via DoH fallback: ${connectionInstance.connection.host}/${DB_NAME}`
+        );
+        return;
+      } catch (fallbackError) {
+        console.error('MongoDB fallback connection error:', fallbackError.message);
       }
-      console.error('MongoDB connection error:', error.message);
-      process.exit(1);
     }
-  };
+    console.error('MongoDB connection error:', error.message);
+    process.exit(1);
+  }
+};
 
-  export default connectDB;
+export default connectDB;
