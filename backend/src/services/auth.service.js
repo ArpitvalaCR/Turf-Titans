@@ -111,7 +111,10 @@ export const registerUser = async ({ name, email, phone, password }) => {
     </div>
   `;
 
-  console.log(`\n========================================\n[TURF TITANS AUTH] OTP for ${normalizedEmail}: ${otp}\n========================================\n`);
+  const maskedEmail = normalizedEmail.replace(/^(.)(.*)(@.*)$/, (_, f, m, d) => `${f}***${d}`);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[AUTH DEV] OTP generated for ${maskedEmail}`);
+  }
 
   try {
     await sendEmail({
@@ -120,7 +123,7 @@ export const registerUser = async ({ name, email, phone, password }) => {
       html: emailHtml,
     });
   } catch (err) {
-    console.error('[EMAIL ERROR] Failed to send email via SMTP:', err.message);
+    console.error('[EMAIL ERROR] Failed to send verification email:', err.message);
   }
 
   return {
@@ -204,7 +207,10 @@ export const resendUserOtp = async ({ email }) => {
     </div>
   `;
 
-  console.log(`\n========================================\n[TURF TITANS AUTH] Resent OTP for ${normalizedEmail}: ${otp}\n========================================\n`);
+  const maskedResendEmail = normalizedEmail.replace(/^(.)(.*)(@.*)$/, (_, f, m, d) => `${f}***${d}`);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[AUTH DEV] Resent OTP generated for ${maskedResendEmail}`);
+  }
 
   try {
     await sendEmail({
@@ -213,7 +219,7 @@ export const resendUserOtp = async ({ email }) => {
       html: emailHtml,
     });
   } catch (err) {
-    console.error('[EMAIL ERROR] Failed to send email via SMTP:', err.message);
+    console.error('[EMAIL ERROR] Failed to send resend OTP email:', err.message);
   }
 
   return {
@@ -377,7 +383,9 @@ export const requestPasswordReset = async (email) => {
     </div>
   `;
 
-  console.log(`\n========================================\n[TURF TITANS AUTH] Password reset link for ${normalizedEmail}:\n${resetUrl}\n========================================\n`);
+  // Safe metadata logging: DO NOT log tokens or reset URLs
+  const maskedEmail = normalizedEmail.replace(/^(.)(.*)(@.*)$/, (_, f, m, d) => `${f}***${d}`);
+  console.log(`[AUTH] Password reset requested for ${maskedEmail}`);
 
   try {
     await sendEmail({
@@ -386,7 +394,7 @@ export const requestPasswordReset = async (email) => {
       html: emailHtml,
     });
   } catch (err) {
-    console.error('[EMAIL ERROR] Failed to send password reset email via SMTP:', err.message);
+    console.error(`[EMAIL ERROR] Failed to send password reset email for ${maskedEmail}:`, err.message);
   }
 
   return { message: 'If an account exists for this email, password reset instructions have been sent.' };
@@ -424,6 +432,9 @@ export const resetPasswordWithToken = async ({ token, newPassword }) => {
   account.passwordResetExpires = undefined;
   account.refreshToken = undefined;
   await account.save();
+
+  const maskedAccountEmail = (account.email || '').replace(/^(.)(.*)(@.*)$/, (_, f, m, d) => `${f}***${d}`);
+  console.log(`[AUTH] Password reset successfully completed for ${maskedAccountEmail}`);
 
   return { message: 'Password has been reset successfully. You can now log in with your new password.' };
 };

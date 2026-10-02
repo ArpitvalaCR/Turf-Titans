@@ -95,3 +95,14 @@ export const registrationQueryValidation = validate([
 export const rejectionReasonValidation = validate([
   body('reason').optional().isString(),
 ]);
+
+export const forgotPasswordValidation = validate([
+  body('email').trim().isEmail().withMessage('Valid email address is required'),
+]);
+
+export const resetPasswordValidation = validate([
+  body('token').trim().notEmpty().withMessage('Password reset token is required'),
+  body('newPassword')
+    .isLength({ min: 6 })
+    .withMessage('Password must be at least 6 characters long'),
+]);
