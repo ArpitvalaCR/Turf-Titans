@@ -6,7 +6,7 @@ import Fixture from '../models/fixture.model.js';
 import User from '../models/user.model.js';
 import Admin from '../models/admin.model.js';
 import ApiError from '../utils/ApiError.js';
-import { uploadToCloudinary } from '../utils/cloudinary.js';
+import { uploadToCloudinary, deleteFromCloudinary, extractCloudinaryPublicId } from '../utils/cloudinary.js';
 import {
   sendRegistrationSubmittedEmail,
   sendRegistrationApprovedEmail,
@@ -15,13 +15,18 @@ import {
   sendPaymentRejectedEmail,
 } from './email.service.js';
 
+const escapeRegex = (str) => {
+  if (!str || typeof str !== 'string') return '';
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
 const populateEvent = async (registration) => {
   if (!registration.eventId) return null;
   return Event.findById(registration.eventId);
 };
 
 export const createRegistration = async (data, paymentFile, currentUser = null) => {
-  // 1. Identify User and enforce strict 3-team global limit
+  // 1. Identify User and enforce strict 3-team global limit against active database documents
   const normalizedCaptainEmail = data.captainEmail ? data.captainEmail.trim().toLowerCase() : '';
   let user = currentUser || null;
   if (!user && data.userId) {
@@ -67,7 +72,7 @@ export const createRegistration = async (data, paymentFile, currentUser = null) 
       event = await Event.findOne({
         $or: [
           { slug: data.eventId },
-          { title: new RegExp(`^${data.eventId}$`, 'i') },
+          { title: new RegExp(`^${escapeRegex(data.eventId)}$`, 'i') },
         ],
       });
     }
@@ -89,7 +94,7 @@ export const createRegistration = async (data, paymentFile, currentUser = null) 
 
     const duplicate = await Registration.findOne({
       eventId: data.eventId,
-      teamName: new RegExp(`^${data.teamName.trim()}$`, 'i'),
+      teamName: new RegExp(`^${escapeRegex(data.teamName.trim())}$`, 'i'),
     });
 
     if (duplicate) {
@@ -110,6 +115,16 @@ export const createRegistration = async (data, paymentFile, currentUser = null) 
     data.paymentAmount = typeof event.registrationFee === 'number' ? event.registrationFee : 1500;
   } else {
     data.paymentAmount = 1500;
+
+    const duplicate = await Registration.findOne({
+      eventId: null,
+      teamName: new RegExp(`^${escapeRegex(data.teamName.trim())}$`, 'i'),
+    });
+
+    if (duplicate) {
+      throw new ApiError(409, 'This team is already registered for this event');
+    }
+
     if (data.captainEmail) {
       const duplicateEmail = await Registration.findOne({
         eventId: null,
@@ -177,7 +192,7 @@ export const getRegistrations = async (filters = {}) => {
       event = await Event.findOne({
         $or: [
           { slug: filters.eventId },
-          { title: new RegExp(`^${filters.eventId}$`, 'i') },
+          { title: new RegExp(`^${escapeRegex(filters.eventId)}$`, 'i') },
         ],
       });
     }
@@ -230,12 +245,25 @@ export const deleteRegistration = async (registrationId) => {
     await Fixture.deleteMany({
       status: 'UPCOMING',
       $or: [
-        { team1: new RegExp(`^${registration.teamName.trim()}$`, 'i') },
-        { team2: new RegExp(`^${registration.teamName.trim()}$`, 'i') },
+        { team1: new RegExp(`^${escapeRegex(registration.teamName.trim())}$`, 'i') },
+        { team2: new RegExp(`^${escapeRegex(registration.teamName.trim())}$`, 'i') },
       ],
     });
   }
 
+  // Safely delete associated payment proof screenshot from Cloudinary if hosted there
+  if (registration.paymentProof) {
+    try {
+      const publicId = extractCloudinaryPublicId(registration.paymentProof);
+      if (publicId) {
+        await deleteFromCloudinary(publicId, 'image');
+      }
+    } catch (cErr) {
+      console.warn('Failed to delete payment proof from Cloudinary:', cErr.message);
+    }
+  }
+
+  // Permanently remove Registration document from MongoDB
   await Registration.findByIdAndDelete(registrationId);
   return { success: true };
 };

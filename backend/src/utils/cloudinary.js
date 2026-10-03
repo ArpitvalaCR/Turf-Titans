@@ -17,6 +17,21 @@ const getCloudinaryConfig = () => {
   return { cloud_name, api_key, api_secret, isConfigured };
 };
 
+export const extractCloudinaryPublicId = (url) => {
+  if (!url || typeof url !== 'string' || !url.includes('cloudinary.com')) return null;
+  try {
+    const parts = url.split('/upload/');
+    if (parts.length < 2) return null;
+    const afterUpload = parts[1];
+    const withoutVersion = afterUpload.replace(/^v\d+\//, '');
+    const lastDotIndex = withoutVersion.lastIndexOf('.');
+    const publicId = lastDotIndex !== -1 ? withoutVersion.substring(0, lastDotIndex) : withoutVersion;
+    return publicId;
+  } catch {
+    return null;
+  }
+};
+
 export const uploadToCloudinary = (fileBuffer, options = {}) =>
   new Promise((resolve, reject) => {
     const config = getCloudinaryConfig();
