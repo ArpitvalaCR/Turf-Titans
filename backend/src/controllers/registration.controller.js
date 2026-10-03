@@ -1,5 +1,6 @@
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
+import ApiError from '../utils/ApiError.js';
 import {
   createRegistration,
   getRegistrations,
@@ -16,6 +17,7 @@ import {
 const parseRegistrationBody = (body) => ({
   registrationId: body.registrationId || `TT-REG-${Math.floor(1000 + Math.random() * 9000)}`,
   eventId: body.eventId || null,
+  userId: body.userId || null,
   teamName: body.teamName,
   teamLogo: body.teamLogo || null,
   captainName: body.captainName,
@@ -34,9 +36,14 @@ const parseRegistrationBody = (body) => ({
 });
 
 export const submitRegistration = asyncHandler(async (req, res) => {
+  const body = parseRegistrationBody(req.body);
+  if (req.user?._id) {
+    body.userId = req.user._id;
+  }
   const registration = await createRegistration(
-    parseRegistrationBody(req.body),
-    req.file
+    body,
+    req.file,
+    req.user
   );
 
   res.status(201).json(
@@ -110,10 +117,10 @@ export const deleteRegistrationHandler = asyncHandler(async (req, res) => {
 
 export const getMyRegistrationsHandler = asyncHandler(async (req, res) => {
   const email = req.user?.email;
-  if (!email) {
+  if (!email && !req.user?._id) {
     throw new ApiError(401, 'Unauthorized: User not authenticated');
   }
-  const registrations = await getUserRegistrations(email);
+  const registrations = await getUserRegistrations(email, req.user?._id);
   res.status(200).json(
     new ApiResponse(200, registrations, 'User registrations fetched successfully')
   );

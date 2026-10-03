@@ -29,6 +29,12 @@ const registrationSchema = new mongoose.Schema(
       index: true,
       default: null,
     },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+      default: null,
+    },
     teamName: {
       type: String,
       required: true,

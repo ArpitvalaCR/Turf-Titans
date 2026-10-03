@@ -20,7 +20,44 @@ const populateEvent = async (registration) => {
   return Event.findById(registration.eventId);
 };
 
-export const createRegistration = async (data, paymentFile) => {
+export const createRegistration = async (data, paymentFile, currentUser = null) => {
+  // 1. Identify User and enforce strict 3-team global limit
+  const normalizedCaptainEmail = data.captainEmail ? data.captainEmail.trim().toLowerCase() : '';
+  let user = currentUser || null;
+  if (!user && data.userId) {
+    user = await User.findById(data.userId);
+  }
+  if (!user && normalizedCaptainEmail) {
+    user = await User.findOne({ email: normalizedCaptainEmail });
+  }
+
+  const normalizedUserEmail = user?.email ? user.email.trim().toLowerCase() : '';
+
+  const userQueryConditions = [];
+  if (user?._id) {
+    userQueryConditions.push({ userId: user._id });
+    data.userId = user._id;
+  } else if (data.userId) {
+    userQueryConditions.push({ userId: data.userId });
+  }
+
+  if (normalizedUserEmail) {
+    userQueryConditions.push({ captainEmail: normalizedUserEmail });
+  }
+  if (normalizedCaptainEmail && normalizedCaptainEmail !== normalizedUserEmail) {
+    userQueryConditions.push({ captainEmail: normalizedCaptainEmail });
+  }
+
+  if (userQueryConditions.length > 0) {
+    const existingTeamCount = await Registration.countDocuments({
+      $or: userQueryConditions,
+    });
+
+    if (existingTeamCount >= 3) {
+      throw new ApiError(400, 'You can register a maximum of 3 teams.');
+    }
+  }
+
   if (data.eventId) {
     let event = null;
     if (mongoose.Types.ObjectId.isValid(data.eventId)) {
@@ -60,10 +97,9 @@ export const createRegistration = async (data, paymentFile) => {
     }
 
     if (data.captainEmail) {
-      const normalizedEmail = data.captainEmail.trim().toLowerCase();
       const duplicateEmail = await Registration.findOne({
         eventId: data.eventId,
-        captainEmail: normalizedEmail,
+        captainEmail: normalizedCaptainEmail,
       });
 
       if (duplicateEmail) {
@@ -75,10 +111,9 @@ export const createRegistration = async (data, paymentFile) => {
   } else {
     data.paymentAmount = 1500;
     if (data.captainEmail) {
-      const normalizedEmail = data.captainEmail.trim().toLowerCase();
       const duplicateEmail = await Registration.findOne({
         eventId: null,
-        captainEmail: normalizedEmail,
+        captainEmail: normalizedCaptainEmail,
       });
 
       if (duplicateEmail) {
@@ -313,10 +348,13 @@ export const rejectRegistration = async (registrationId, adminId, reason = '') =
   return registration;
 };
 
-export const getUserRegistrations = async (email) => {
-  if (!email) return [];
-  const normalizedEmail = email.trim().toLowerCase();
-  return Registration.find({ captainEmail: normalizedEmail })
+export const getUserRegistrations = async (email, userId = null) => {
+  if (!email && !userId) return [];
+  const queryConditions = [];
+  if (userId) queryConditions.push({ userId });
+  if (email) queryConditions.push({ captainEmail: email.trim().toLowerCase() });
+  const query = queryConditions.length === 1 ? queryConditions[0] : { $or: queryConditions };
+  return Registration.find(query)
     .sort({ createdAt: -1 })
     .populate('eventId', 'title sport venue startDate endDate registrationFee status')
     .populate('verifiedBy', 'username email');
