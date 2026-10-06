@@ -161,8 +161,8 @@ export function SportsJourneyStory() {
                 type="button"
                 onClick={() => handleSelectPart(idx)}
                 className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${isActive
-                    ? 'bg-[#74c004] text-[#050914] shadow-md shadow-[#74c004]/20'
-                    : 'bg-white/5 border border-white/10 text-slate-400 hover:text-white'
+                  ? 'bg-[#74c004] text-[#050914] shadow-md shadow-[#74c004]/20'
+                  : 'bg-white/5 border border-white/10 text-slate-400 hover:text-white'
                   }`}
               >
                 <span>{part.icon}</span>
@@ -316,8 +316,8 @@ export function SportsJourneyStory() {
                     onClick={() => handleSelectPart(idx)}
                     title={`${part.mainHeading} — ${part.italicSubheading}`}
                     className={`relative flex h-12 w-12 items-center justify-center rounded-full transition-all duration-300 cursor-pointer text-lg ${isActive
-                        ? 'bg-[#74c004] text-[#050914] shadow-[0_0_20px_rgba(116,192,4,0.6)] scale-110'
-                        : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
+                      ? 'bg-[#74c004] text-[#050914] shadow-[0_0_20px_rgba(116,192,4,0.6)] scale-110'
+                      : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
                       }`}
                   >
                     <span>{part.icon}</span>
